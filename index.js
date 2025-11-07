@@ -32,7 +32,7 @@ const corsOptions = {
       'http://localhost:3000',
       'http://localhost:5173',
       'https://yourfrontenddomain.com',
-      'https://www.yourfrontenddomain.com',
+      'https://muzaf.vercel.app',
     ];
 
     if (allowedOrigins.indexOf(origin) !== -1) {
