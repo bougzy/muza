@@ -728,6 +728,238 @@ app.get("/api/health", (req, res) => {
 // ================== ENHANCED AUTH ROUTES ==================
 
 // Enhanced Registration with Complete Location Tracking
+// app.post("/api/register", async (req, res) => {
+//   try {
+//     const {
+//       username, name, email, password, confirmPassword,
+//       bitcoinAccount, tetherTRC20Account, secretQuestion,
+//       secretAnswer, agreedToTerms, referralCode
+//     } = req.body;
+
+//     console.log('🚀 Registration attempt started for:', { email, username });
+
+//     // Validation
+//     const missingFields = [];
+//     if (!username) missingFields.push('username');
+//     if (!name) missingFields.push('name');
+//     if (!email) missingFields.push('email');
+//     if (!password) missingFields.push('password');
+//     if (!confirmPassword) missingFields.push('confirmPassword');
+//     if (!secretQuestion) missingFields.push('secretQuestion');
+//     if (!secretAnswer) missingFields.push('secretAnswer');
+
+//     if (missingFields.length > 0) {
+//       return res.status(400).json({ 
+//         success: false,
+//         message: `Missing required fields: ${missingFields.join(', ')}` 
+//       });
+//     }
+
+//     if (password !== confirmPassword) {
+//       return res.status(400).json({ 
+//         success: false,
+//         message: "Passwords do not match" 
+//       });
+//     }
+
+//     if (!agreedToTerms) {
+//       return res.status(400).json({ 
+//         success: false,
+//         message: "You must agree to the terms and conditions" 
+//       });
+//     }
+
+//     if (password.length < 6) {
+//       return res.status(400).json({ 
+//         success: false,
+//         message: "Password must be at least 6 characters long" 
+//       });
+//     }
+
+//     // Enhanced location tracking
+//     const rawIp = req.clientIp;
+//     const cleanedIp = validateAndCleanIP(rawIp);
+//     const locationData = getUserLocation(cleanedIp);
+
+//     console.log('📍 User location data:', {
+//       ip: cleanedIp,
+//       country: locationData.country,
+//       city: locationData.city,
+//       source: locationData.source
+//     });
+
+//     const existingUser = await User.findOne({ 
+//       $or: [
+//         { email: email.toLowerCase().trim() }, 
+//         { username: username.toLowerCase().trim() }
+//       ] 
+//     });
+    
+//     if (existingUser) {
+//       if (existingUser.email === email.toLowerCase().trim()) {
+//         return res.status(400).json({ 
+//           success: false,
+//           message: "Email already registered" 
+//         });
+//       }
+//       if (existingUser.username === username.toLowerCase().trim()) {
+//         return res.status(400).json({ 
+//           success: false,
+//           message: "Username already taken" 
+//         });
+//       }
+//     }
+
+//     let referredBy = null;
+//     if (referralCode && referralCode.trim() !== '') {
+//       const referrer = await User.findOne({ 
+//         referralCode: referralCode.toUpperCase().trim() 
+//       });
+//       if (referrer) referredBy = referrer._id;
+//     }
+
+//     const userData = {
+//       username: username.toLowerCase().trim(),
+//       name: name.trim(),
+//       email: email.toLowerCase().trim(),
+//       password: password,
+//       confirmPassword: confirmPassword,
+//       bitcoinAccount: bitcoinAccount ? bitcoinAccount.trim() : undefined,
+//       tetherTRC20Account: tetherTRC20Account ? tetherTRC20Account.trim() : undefined,
+//       secretQuestion: secretQuestion.trim(),
+//       secretAnswer: secretAnswer.trim(),
+//       agreedToTerms: !!agreedToTerms,
+//       referredBy: referredBy,
+//       ipAddress: cleanedIp,
+//       location: {
+//         country: locationData.country,
+//         countryCode: locationData.countryCode,
+//         region: locationData.region,
+//         regionName: locationData.regionName,
+//         city: locationData.city,
+//         zip: locationData.zip,
+//         timezone: locationData.timezone,
+//         coordinates: {
+//           latitude: locationData.lat,
+//           longitude: locationData.lon
+//         },
+//         isp: locationData.isp,
+//         organization: locationData.org,
+//         asNumber: locationData.as,
+//         source: locationData.source,
+//         queryIp: locationData.query,
+//         lastUpdated: new Date()
+//       },
+//       loginHistory: [{
+//         ip: cleanedIp,
+//         location: locationData,
+//         timestamp: new Date(),
+//         event: 'registration'
+//       }]
+//     };
+
+//     const user = await User.create(userData);
+
+//     if (referredBy) {
+//       await User.findByIdAndUpdate(referredBy, { 
+//         $push: { referrals: user._id } 
+//       });
+//     }
+
+//     await sendNotification(
+//       user._id,
+//       "🎉 Welcome to Our Platform!",
+//       `Thank you for registering, ${user.name}! Your account has been created successfully. ` +
+//       `You registered from ${locationData.city || 'Unknown'}, ${locationData.country || 'Unknown'}.`,
+//       "welcome"
+//     );
+
+//     const userResponse = await User.findById(user._id)
+//       .select("-password -secretAnswer -confirmPassword -loginHistory");
+
+//     res.status(201).json({
+//       success: true,
+//       data: {
+//         user: userResponse,
+//         token: generateToken(user._id, user.role),
+//         location: {
+//           country: locationData.country,
+//           city: locationData.city,
+//           timezone: locationData.timezone
+//         }
+//       },
+//       message: `Registration successful! Welcome, ${user.name}!`
+//     });
+
+//   } catch (error) {
+//     console.error('💥 Registration error:', error);
+    
+//     if (error.code === 11000) {
+//       const field = Object.keys(error.keyValue)[0];
+//       return res.status(400).json({ 
+//         success: false,
+//         message: `${field.charAt(0).toUpperCase() + field.slice(1)} already exists` 
+//       });
+//     }
+    
+//     if (error.name === 'ValidationError') {
+//       const messages = Object.values(error.errors).map(val => val.message);
+//       return res.status(400).json({ 
+//         success: false,
+//         message: messages.join(', ') 
+//       });
+//     }
+
+//     res.status(500).json({ 
+//       success: false,
+//       message: "Registration failed. Please try again." 
+//     });
+//   }
+// });
+
+
+// ================== AUTHENTICATION MIDDLEWARE ==================
+// const protect = async (req, res, next) => {
+//   try {
+//     const token = req.headers.authorization?.startsWith("Bearer ") 
+//       ? req.headers.authorization.slice(7) 
+//       : null;
+    
+//     if (!token) {
+//       return res.status(401).json({ 
+//         success: false,
+//         message: "Access denied. No token provided." 
+//       });
+//     }
+
+//     const decoded = jwt.verify(token, process.env.JWT_SECRET || "supersecretjwtkey");
+//     const user = await User.findById(decoded.id).select("-password -secretAnswer");
+    
+//     if (!user || user.isBlocked) {
+//       return res.status(401).json({ 
+//         success: false,
+//         message: "User not found or account blocked." 
+//       });
+//     }
+    
+//     req.user = user;
+//     next();
+//   } catch (err) {
+//     res.status(401).json({ 
+//       success: false,
+//       message: "Invalid token." 
+//     });
+//   }
+// };
+
+// // ================== UTILS ==================
+// const generateToken = (id, role) => {
+//   return jwt.sign({ id, role }, process.env.JWT_SECRET || "supersecretjwtkey", { expiresIn: "7d" });
+// };
+
+// ================== SYNCED AUTH ROUTES ==================
+
+// Enhanced Registration with Auto-Login
 app.post("/api/register", async (req, res) => {
   try {
     const {
@@ -736,22 +968,11 @@ app.post("/api/register", async (req, res) => {
       secretAnswer, agreedToTerms, referralCode
     } = req.body;
 
-    console.log('🚀 Registration attempt started for:', { email, username });
-
     // Validation
-    const missingFields = [];
-    if (!username) missingFields.push('username');
-    if (!name) missingFields.push('name');
-    if (!email) missingFields.push('email');
-    if (!password) missingFields.push('password');
-    if (!confirmPassword) missingFields.push('confirmPassword');
-    if (!secretQuestion) missingFields.push('secretQuestion');
-    if (!secretAnswer) missingFields.push('secretAnswer');
-
-    if (missingFields.length > 0) {
+    if (!username || !name || !email || !password || !confirmPassword || !secretQuestion || !secretAnswer) {
       return res.status(400).json({ 
         success: false,
-        message: `Missing required fields: ${missingFields.join(', ')}` 
+        message: "All required fields must be provided" 
       });
     }
 
@@ -769,147 +990,57 @@ app.post("/api/register", async (req, res) => {
       });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ 
-        success: false,
-        message: "Password must be at least 6 characters long" 
-      });
-    }
-
-    // Enhanced location tracking
-    const rawIp = req.clientIp;
-    const cleanedIp = validateAndCleanIP(rawIp);
-    const locationData = getUserLocation(cleanedIp);
-
-    console.log('📍 User location data:', {
-      ip: cleanedIp,
-      country: locationData.country,
-      city: locationData.city,
-      source: locationData.source
-    });
-
+    // Check for existing user
     const existingUser = await User.findOne({ 
-      $or: [
-        { email: email.toLowerCase().trim() }, 
-        { username: username.toLowerCase().trim() }
-      ] 
+      $or: [{ email: email.toLowerCase() }, { username: username.toLowerCase() }] 
     });
     
     if (existingUser) {
-      if (existingUser.email === email.toLowerCase().trim()) {
-        return res.status(400).json({ 
-          success: false,
-          message: "Email already registered" 
-        });
-      }
-      if (existingUser.username === username.toLowerCase().trim()) {
-        return res.status(400).json({ 
-          success: false,
-          message: "Username already taken" 
-        });
-      }
-    }
-
-    let referredBy = null;
-    if (referralCode && referralCode.trim() !== '') {
-      const referrer = await User.findOne({ 
-        referralCode: referralCode.toUpperCase().trim() 
-      });
-      if (referrer) referredBy = referrer._id;
-    }
-
-    const userData = {
-      username: username.toLowerCase().trim(),
-      name: name.trim(),
-      email: email.toLowerCase().trim(),
-      password: password,
-      confirmPassword: confirmPassword,
-      bitcoinAccount: bitcoinAccount ? bitcoinAccount.trim() : undefined,
-      tetherTRC20Account: tetherTRC20Account ? tetherTRC20Account.trim() : undefined,
-      secretQuestion: secretQuestion.trim(),
-      secretAnswer: secretAnswer.trim(),
-      agreedToTerms: !!agreedToTerms,
-      referredBy: referredBy,
-      ipAddress: cleanedIp,
-      location: {
-        country: locationData.country,
-        countryCode: locationData.countryCode,
-        region: locationData.region,
-        regionName: locationData.regionName,
-        city: locationData.city,
-        zip: locationData.zip,
-        timezone: locationData.timezone,
-        coordinates: {
-          latitude: locationData.lat,
-          longitude: locationData.lon
-        },
-        isp: locationData.isp,
-        organization: locationData.org,
-        asNumber: locationData.as,
-        source: locationData.source,
-        queryIp: locationData.query,
-        lastUpdated: new Date()
-      },
-      loginHistory: [{
-        ip: cleanedIp,
-        location: locationData,
-        timestamp: new Date(),
-        event: 'registration'
-      }]
-    };
-
-    const user = await User.create(userData);
-
-    if (referredBy) {
-      await User.findByIdAndUpdate(referredBy, { 
-        $push: { referrals: user._id } 
+      return res.status(400).json({ 
+        success: false,
+        message: existingUser.email === email ? "Email already registered" : "Username already taken"
       });
     }
 
-    await sendNotification(
-      user._id,
-      "🎉 Welcome to Our Platform!",
-      `Thank you for registering, ${user.name}! Your account has been created successfully. ` +
-      `You registered from ${locationData.city || 'Unknown'}, ${locationData.country || 'Unknown'}.`,
-      "welcome"
-    );
+    // Create user
+    const user = await User.create({
+      username: username.toLowerCase(),
+      name,
+      email: email.toLowerCase(),
+      password,
+      secretQuestion,
+      secretAnswer,
+      bitcoinAccount,
+      tetherTRC20Account,
+      agreedToTerms: true,
+      ipAddress: req.clientIp
+    });
 
-    const userResponse = await User.findById(user._id)
-      .select("-password -secretAnswer -confirmPassword -loginHistory");
+    // Generate token for auto-login
+    const token = generateToken(user._id, user.role);
+
+    // Get user without sensitive data
+    const userResponse = await User.findById(user._id).select("-password -secretAnswer");
 
     res.status(201).json({
       success: true,
       data: {
         user: userResponse,
-        token: generateToken(user._id, user.role),
-        location: {
-          country: locationData.country,
-          city: locationData.city,
-          timezone: locationData.timezone
-        }
+        token: token
       },
-      message: `Registration successful! Welcome, ${user.name}!`
+      message: "Registration successful! You are now logged in."
     });
 
   } catch (error) {
-    console.error('💥 Registration error:', error);
+    console.error('Registration error:', error);
     
     if (error.code === 11000) {
-      const field = Object.keys(error.keyValue)[0];
       return res.status(400).json({ 
         success: false,
-        message: `${field.charAt(0).toUpperCase() + field.slice(1)} already exists` 
+        message: "User already exists with this email or username" 
       });
     }
     
-    if (error.name === 'ValidationError') {
-      const messages = Object.values(error.errors).map(val => val.message);
-      return res.status(400).json({ 
-        success: false,
-        message: messages.join(', ') 
-      });
-    }
-
     res.status(500).json({ 
       success: false,
       message: "Registration failed. Please try again." 
@@ -917,73 +1048,166 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
+// Enhanced Login with Same Data Access
 app.post("/api/login", async (req, res) => {
-    try {
-        const { email, password } = req.body;
-        const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
-        
-        if (user && await user.matchPassword(password)) {
-            if (user.isBlocked) {
-                return res.status(403).json({ 
-                    success: false,
-                    message: "Account blocked. Please contact support." 
-                });
-            }
-            
-            const rawIp = req.clientIp;
-            const cleanedIp = validateAndCleanIP(rawIp);
-            const locationData = getUserLocation(cleanedIp);
-
-            await User.findByIdAndUpdate(user._id, {
-                $set: {
-                    ipAddress: cleanedIp,
-                    lastLogin: new Date(),
-                    ...(locationData.country !== 'Unknown' && {
-                        'location.country': locationData.country,
-                        'location.city': locationData.city,
-                        'location.coordinates.latitude': locationData.lat,
-                        'location.coordinates.longitude': locationData.lon,
-                        'location.lastUpdated': new Date()
-                    })
-                },
-                $push: {
-                    loginHistory: {
-                        ip: cleanedIp,
-                        location: locationData,
-                        timestamp: new Date(),
-                        event: 'login'
-                    }
-                }
-            });
-
-            const userResponse = await User.findById(user._id).select("-password -secretAnswer -confirmPassword");
-
-            // ✅ FIX: Ensure complete user data is returned
-            return res.json({
-                success: true,
-                data: {
-                    user: userResponse, // This contains all user data including name and email
-                    token: generateToken(user._id, user.role)
-                },
-                message: "Login successful"
-            });
-        }
-        res.status(401).json({ 
-            success: false,
-            message: "Invalid email or password" 
-        });
-    } catch (error) { 
-        console.error('Login error:', error);
-        res.status(500).json({ 
-            success: false,
-            message: "Login failed. Please try again." 
-        }); 
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Email and password are required" 
+      });
     }
+
+    // Find user with password field included
+    const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
+    
+    if (!user) {
+      return res.status(401).json({ 
+        success: false,
+        message: "Invalid email or password" 
+      });
+    }
+
+    // Check password
+    const isPasswordMatch = await user.matchPassword(password);
+    if (!isPasswordMatch) {
+      return res.status(401).json({ 
+        success: false,
+        message: "Invalid email or password" 
+      });
+    }
+
+    if (user.isBlocked) {
+      return res.status(403).json({ 
+        success: false,
+        message: "Account blocked. Please contact support." 
+      });
+    }
+
+    // Update last login
+    user.lastLogin = new Date();
+    await user.save();
+
+    // Generate token
+    const token = generateToken(user._id, user.role);
+
+    // Get user without sensitive data
+    const userResponse = await User.findById(user._id).select("-password -secretAnswer");
+
+    res.json({
+      success: true,
+      data: {
+        user: userResponse,
+        token: token
+      },
+      message: "Login successful"
+    });
+
+  } catch (error) { 
+    console.error('Login error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Login failed. Please try again." 
+    }); 
+  }
 });
+
+// Get current user profile
+app.get("/api/me", protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select("-password -secretAnswer");
+    
+    res.json({
+      success: true,
+      data: {
+        user: user
+      },
+      message: "User profile retrieved successfully"
+    });
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Failed to fetch user data" 
+    });
+  }
+});
+
+// app.post("/api/login", async (req, res) => {
+//     try {
+//         const { email, password } = req.body;
+//         const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
+        
+//         if (user && await user.matchPassword(password)) {
+//             if (user.isBlocked) {
+//                 return res.status(403).json({ 
+//                     success: false,
+//                     message: "Account blocked. Please contact support." 
+//                 });
+//             }
+            
+//             const rawIp = req.clientIp;
+//             const cleanedIp = validateAndCleanIP(rawIp);
+//             const locationData = getUserLocation(cleanedIp);
+
+//             await User.findByIdAndUpdate(user._id, {
+//                 $set: {
+//                     ipAddress: cleanedIp,
+//                     lastLogin: new Date(),
+//                     ...(locationData.country !== 'Unknown' && {
+//                         'location.country': locationData.country,
+//                         'location.city': locationData.city,
+//                         'location.coordinates.latitude': locationData.lat,
+//                         'location.coordinates.longitude': locationData.lon,
+//                         'location.lastUpdated': new Date()
+//                     })
+//                 },
+//                 $push: {
+//                     loginHistory: {
+//                         ip: cleanedIp,
+//                         location: locationData,
+//                         timestamp: new Date(),
+//                         event: 'login'
+//                     }
+//                 }
+//             });
+
+//             const userResponse = await User.findById(user._id).select("-password -secretAnswer -confirmPassword");
+
+//             // ✅ FIX: Ensure complete user data is returned
+//             return res.json({
+//                 success: true,
+//                 data: {
+//                     user: userResponse, // This contains all user data including name and email
+//                     token: generateToken(user._id, user.role)
+//                 },
+//                 message: "Login successful"
+//             });
+//         }
+//         res.status(401).json({ 
+//             success: false,
+//             message: "Invalid email or password" 
+//         });
+//     } catch (error) { 
+//         console.error('Login error:', error);
+//         res.status(500).json({ 
+//             success: false,
+//             message: "Login failed. Please try again." 
+//         }); 
+//     }
+// });
 
 // ================== ENHANCED ADMIN ROUTES ==================
 
 // Admin Dashboard with Complete Statistics
+
+
+
+
+
+
 app.get("/api/admin/dashboard-stats", adminAuth, async (req, res) => {
   try {
     const totalUsers = await User.countDocuments();
