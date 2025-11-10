@@ -33,6 +33,7 @@ const corsOptions = {
       'http://localhost:5173',
       'https://yourfrontenddomain.com',
       'https://muzaf.vercel.app',
+      'https://worldcurencytrade.vercel.app',
     ];
 
     if (allowedOrigins.indexOf(origin) !== -1) {
