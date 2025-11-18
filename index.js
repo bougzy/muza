@@ -19,10 +19,6 @@ const cors = require('cors');
 const app = express();
 
 // ================== CORS CONFIGURATION ==================
-// ================== APP SETUP ==================
-
-
-// ================== CORS CONFIGURATION ==================
 // Enhanced CORS configuration for production
 const corsOptions = {
   origin: function (origin, callback) {
@@ -71,7 +67,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-// app.options('*', cors(corsOptions));
 
 // Security headers
 app.use((req, res, next) => {
@@ -86,10 +81,6 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(requestIp.mw());
-// ... rest of your existing code
-// ================== CORS CONFIGURATION ==================
-
-
 
 const server = http.createServer(app);
 
@@ -272,6 +263,28 @@ userSchema.methods.matchSecretAnswer = async function(enteredAnswer) {
 
 const User = mongoose.model("User", userSchema);
 
+// Enhanced Admin Schema with username
+const adminSchema = new mongoose.Schema({
+  username: { type: String, unique: true, required: true },
+  email: { type: String, unique: true, required: true },
+  password: { type: String, required: true, select: false },
+  name: { type: String, required: true },
+  role: { type: String, default: "admin" }
+}, { timestamps: true });
+
+adminSchema.pre("save", async function(next) {
+  if (!this.isModified("password")) return next();
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
+});
+
+adminSchema.methods.matchPassword = async function(enteredPassword) {
+  return await bcrypt.compare(enteredPassword, this.password);
+};
+
+const Admin = mongoose.model("Admin", adminSchema);
+
 // Earnings Breakdown Schema
 const earningsBreakdownSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
@@ -314,23 +327,6 @@ const transactionReportSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const TransactionReport = mongoose.model("TransactionReport", transactionReportSchema);
-
-// Admin Schema
-const adminSchema = new mongoose.Schema({
-  email: { type: String, unique: true, required: true },
-  password: { type: String, required: true, select: false },
-  role: { type: String, default: "admin" },
-  name: { type: String, default: "Admin" }
-}, { timestamps: true });
-
-adminSchema.pre("save", async function(next) {
-  if (!this.isModified("password")) return next();
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
-});
-
-const Admin = mongoose.model("Admin", adminSchema);
 
 // Transaction Schema
 const transactionSchema = new mongoose.Schema({
@@ -392,8 +388,6 @@ const profitSchema = new mongoose.Schema({
 const Profit = mongoose.model("Profit", profitSchema);
 
 // ================== MIDDLEWARE ==================
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 
 // Enhanced file upload configuration
 const storage = multer.diskStorage({
@@ -473,6 +467,7 @@ const protect = async (req, res, next) => {
   }
 };
 
+// ENHANCED ADMIN AUTHENTICATION MIDDLEWARE
 const adminAuth = async (req, res, next) => {
   try {
     const username = req.headers["admin-username"];
@@ -485,8 +480,38 @@ const adminAuth = async (req, res, next) => {
       });
     }
 
-    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-      req.admin = { username };
+    // Check database for admin users first
+    const admin = await Admin.findOne({ 
+      $or: [
+        { username: username },
+        { email: username }
+      ]
+    }).select('+password');
+    
+    if (admin && await admin.matchPassword(password)) {
+      req.admin = {
+        id: admin._id,
+        username: admin.username,
+        email: admin.email,
+        name: admin.name,
+        role: admin.role
+      };
+      return next();
+    }
+
+    // Fallback to hardcoded credentials
+    const HARDCODED_CREDENTIALS = {
+      username: "admin",
+      password: "admin123"
+    };
+    
+    if (username === HARDCODED_CREDENTIALS.username && password === HARDCODED_CREDENTIALS.password) {
+      req.admin = {
+        username: HARDCODED_CREDENTIALS.username,
+        email: "admin@galaxydigital.com",
+        name: "Super Administrator",
+        role: "super_admin"
+      };
       return next();
     }
     
@@ -495,6 +520,7 @@ const adminAuth = async (req, res, next) => {
       message: "Invalid admin credentials" 
     });
   } catch (error) {
+    console.error('Admin auth error:', error);
     res.status(500).json({ 
       success: false,
       message: "Admin authentication error" 
@@ -549,8 +575,7 @@ const wss = new WebSocket.Server({
   server,
   path: '/ws',
   perMessageDeflate: false,
-   verifyClient: (info, callback) => {
-    // CORS verification for WebSocket connections
+  verifyClient: (info, callback) => {
     const allowedOrigins = [
       'http://localhost:3000',
       'http://localhost:5173', 
@@ -573,12 +598,6 @@ const clients = new Map();
 
 wss.on('connection', (ws, req) => {
   console.log('🔌 New WebSocket connection attempt');
-  
-  // Set CORS headers for WebSocket if needed
-  const origin = req.headers.origin;
-  if (origin) {
-    console.log(`WebSocket connection from origin: ${origin}`);
-  }
   
   const authTimeout = setTimeout(() => {
     if (!ws.authenticated) {
@@ -721,244 +740,11 @@ app.get("/api/health", (req, res) => {
     success: true,
     message: "Server is running healthy",
     timestamp: new Date().toISOString(),
-    cors: "enabled",
     environment: process.env.NODE_ENV || 'development'
   });
 });
 
-// ================== ENHANCED AUTH ROUTES ==================
-
-// Enhanced Registration with Complete Location Tracking
-// app.post("/api/register", async (req, res) => {
-//   try {
-//     const {
-//       username, name, email, password, confirmPassword,
-//       bitcoinAccount, tetherTRC20Account, secretQuestion,
-//       secretAnswer, agreedToTerms, referralCode
-//     } = req.body;
-
-//     console.log('🚀 Registration attempt started for:', { email, username });
-
-//     // Validation
-//     const missingFields = [];
-//     if (!username) missingFields.push('username');
-//     if (!name) missingFields.push('name');
-//     if (!email) missingFields.push('email');
-//     if (!password) missingFields.push('password');
-//     if (!confirmPassword) missingFields.push('confirmPassword');
-//     if (!secretQuestion) missingFields.push('secretQuestion');
-//     if (!secretAnswer) missingFields.push('secretAnswer');
-
-//     if (missingFields.length > 0) {
-//       return res.status(400).json({ 
-//         success: false,
-//         message: `Missing required fields: ${missingFields.join(', ')}` 
-//       });
-//     }
-
-//     if (password !== confirmPassword) {
-//       return res.status(400).json({ 
-//         success: false,
-//         message: "Passwords do not match" 
-//       });
-//     }
-
-//     if (!agreedToTerms) {
-//       return res.status(400).json({ 
-//         success: false,
-//         message: "You must agree to the terms and conditions" 
-//       });
-//     }
-
-//     if (password.length < 6) {
-//       return res.status(400).json({ 
-//         success: false,
-//         message: "Password must be at least 6 characters long" 
-//       });
-//     }
-
-//     // Enhanced location tracking
-//     const rawIp = req.clientIp;
-//     const cleanedIp = validateAndCleanIP(rawIp);
-//     const locationData = getUserLocation(cleanedIp);
-
-//     console.log('📍 User location data:', {
-//       ip: cleanedIp,
-//       country: locationData.country,
-//       city: locationData.city,
-//       source: locationData.source
-//     });
-
-//     const existingUser = await User.findOne({ 
-//       $or: [
-//         { email: email.toLowerCase().trim() }, 
-//         { username: username.toLowerCase().trim() }
-//       ] 
-//     });
-    
-//     if (existingUser) {
-//       if (existingUser.email === email.toLowerCase().trim()) {
-//         return res.status(400).json({ 
-//           success: false,
-//           message: "Email already registered" 
-//         });
-//       }
-//       if (existingUser.username === username.toLowerCase().trim()) {
-//         return res.status(400).json({ 
-//           success: false,
-//           message: "Username already taken" 
-//         });
-//       }
-//     }
-
-//     let referredBy = null;
-//     if (referralCode && referralCode.trim() !== '') {
-//       const referrer = await User.findOne({ 
-//         referralCode: referralCode.toUpperCase().trim() 
-//       });
-//       if (referrer) referredBy = referrer._id;
-//     }
-
-//     const userData = {
-//       username: username.toLowerCase().trim(),
-//       name: name.trim(),
-//       email: email.toLowerCase().trim(),
-//       password: password,
-//       confirmPassword: confirmPassword,
-//       bitcoinAccount: bitcoinAccount ? bitcoinAccount.trim() : undefined,
-//       tetherTRC20Account: tetherTRC20Account ? tetherTRC20Account.trim() : undefined,
-//       secretQuestion: secretQuestion.trim(),
-//       secretAnswer: secretAnswer.trim(),
-//       agreedToTerms: !!agreedToTerms,
-//       referredBy: referredBy,
-//       ipAddress: cleanedIp,
-//       location: {
-//         country: locationData.country,
-//         countryCode: locationData.countryCode,
-//         region: locationData.region,
-//         regionName: locationData.regionName,
-//         city: locationData.city,
-//         zip: locationData.zip,
-//         timezone: locationData.timezone,
-//         coordinates: {
-//           latitude: locationData.lat,
-//           longitude: locationData.lon
-//         },
-//         isp: locationData.isp,
-//         organization: locationData.org,
-//         asNumber: locationData.as,
-//         source: locationData.source,
-//         queryIp: locationData.query,
-//         lastUpdated: new Date()
-//       },
-//       loginHistory: [{
-//         ip: cleanedIp,
-//         location: locationData,
-//         timestamp: new Date(),
-//         event: 'registration'
-//       }]
-//     };
-
-//     const user = await User.create(userData);
-
-//     if (referredBy) {
-//       await User.findByIdAndUpdate(referredBy, { 
-//         $push: { referrals: user._id } 
-//       });
-//     }
-
-//     await sendNotification(
-//       user._id,
-//       "🎉 Welcome to Our Platform!",
-//       `Thank you for registering, ${user.name}! Your account has been created successfully. ` +
-//       `You registered from ${locationData.city || 'Unknown'}, ${locationData.country || 'Unknown'}.`,
-//       "welcome"
-//     );
-
-//     const userResponse = await User.findById(user._id)
-//       .select("-password -secretAnswer -confirmPassword -loginHistory");
-
-//     res.status(201).json({
-//       success: true,
-//       data: {
-//         user: userResponse,
-//         token: generateToken(user._id, user.role),
-//         location: {
-//           country: locationData.country,
-//           city: locationData.city,
-//           timezone: locationData.timezone
-//         }
-//       },
-//       message: `Registration successful! Welcome, ${user.name}!`
-//     });
-
-//   } catch (error) {
-//     console.error('💥 Registration error:', error);
-    
-//     if (error.code === 11000) {
-//       const field = Object.keys(error.keyValue)[0];
-//       return res.status(400).json({ 
-//         success: false,
-//         message: `${field.charAt(0).toUpperCase() + field.slice(1)} already exists` 
-//       });
-//     }
-    
-//     if (error.name === 'ValidationError') {
-//       const messages = Object.values(error.errors).map(val => val.message);
-//       return res.status(400).json({ 
-//         success: false,
-//         message: messages.join(', ') 
-//       });
-//     }
-
-//     res.status(500).json({ 
-//       success: false,
-//       message: "Registration failed. Please try again." 
-//     });
-//   }
-// });
-
-
-// ================== AUTHENTICATION MIDDLEWARE ==================
-// const protect = async (req, res, next) => {
-//   try {
-//     const token = req.headers.authorization?.startsWith("Bearer ") 
-//       ? req.headers.authorization.slice(7) 
-//       : null;
-    
-//     if (!token) {
-//       return res.status(401).json({ 
-//         success: false,
-//         message: "Access denied. No token provided." 
-//       });
-//     }
-
-//     const decoded = jwt.verify(token, process.env.JWT_SECRET || "supersecretjwtkey");
-//     const user = await User.findById(decoded.id).select("-password -secretAnswer");
-    
-//     if (!user || user.isBlocked) {
-//       return res.status(401).json({ 
-//         success: false,
-//         message: "User not found or account blocked." 
-//       });
-//     }
-    
-//     req.user = user;
-//     next();
-//   } catch (err) {
-//     res.status(401).json({ 
-//       success: false,
-//       message: "Invalid token." 
-//     });
-//   }
-// };
-
-// // ================== UTILS ==================
-// const generateToken = (id, role) => {
-//   return jwt.sign({ id, role }, process.env.JWT_SECRET || "supersecretjwtkey", { expiresIn: "7d" });
-// };
-
-// ================== SYNCED AUTH ROUTES ==================
+// ================== AUTH ROUTES ==================
 
 // Enhanced Registration with Auto-Login
 app.post("/api/register", async (req, res) => {
@@ -1136,78 +922,183 @@ app.get("/api/me", protect, async (req, res) => {
   }
 });
 
-// app.post("/api/login", async (req, res) => {
-//     try {
-//         const { email, password } = req.body;
-//         const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
-        
-//         if (user && await user.matchPassword(password)) {
-//             if (user.isBlocked) {
-//                 return res.status(403).json({ 
-//                     success: false,
-//                     message: "Account blocked. Please contact support." 
-//                 });
-//             }
-            
-//             const rawIp = req.clientIp;
-//             const cleanedIp = validateAndCleanIP(rawIp);
-//             const locationData = getUserLocation(cleanedIp);
+// ================== ADMIN MANAGEMENT ROUTES ==================
 
-//             await User.findByIdAndUpdate(user._id, {
-//                 $set: {
-//                     ipAddress: cleanedIp,
-//                     lastLogin: new Date(),
-//                     ...(locationData.country !== 'Unknown' && {
-//                         'location.country': locationData.country,
-//                         'location.city': locationData.city,
-//                         'location.coordinates.latitude': locationData.lat,
-//                         'location.coordinates.longitude': locationData.lon,
-//                         'location.lastUpdated': new Date()
-//                     })
-//                 },
-//                 $push: {
-//                     loginHistory: {
-//                         ip: cleanedIp,
-//                         location: locationData,
-//                         timestamp: new Date(),
-//                         event: 'login'
-//                     }
-//                 }
-//             });
+// Get all admins
+app.get("/api/admin/admins", adminAuth, async (req, res) => {
+  try {
+    const admins = await Admin.find({}).select('-password').sort({ createdAt: -1 });
+    
+    res.json({
+      success: true,
+      data: {
+        admins: admins,
+        total: admins.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
-//             const userResponse = await User.findById(user._id).select("-password -secretAnswer -confirmPassword");
+// Create new admin
+app.post("/api/admin/admins", adminAuth, async (req, res) => {
+  try {
+    const { username, email, password, name, role = "admin" } = req.body;
+    
+    if (!username || !email || !password || !name) {
+      return res.status(400).json({ 
+        success: false,
+        message: "All fields are required" 
+      });
+    }
 
-//             // ✅ FIX: Ensure complete user data is returned
-//             return res.json({
-//                 success: true,
-//                 data: {
-//                     user: userResponse, // This contains all user data including name and email
-//                     token: generateToken(user._id, user.role)
-//                 },
-//                 message: "Login successful"
-//             });
-//         }
-//         res.status(401).json({ 
-//             success: false,
-//             message: "Invalid email or password" 
-//         });
-//     } catch (error) { 
-//         console.error('Login error:', error);
-//         res.status(500).json({ 
-//             success: false,
-//             message: "Login failed. Please try again." 
-//         }); 
-//     }
-// });
+    if (password.length < 6) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Password must be at least 6 characters long" 
+      });
+    }
 
-// ================== ENHANCED ADMIN ROUTES ==================
+    // Check if admin already exists
+    const existingAdmin = await Admin.findOne({
+      $or: [{ email: email.toLowerCase() }, { username: username.toLowerCase() }]
+    });
+    
+    if (existingAdmin) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Admin with this email or username already exists" 
+      });
+    }
 
-// Admin Dashboard with Complete Statistics
+    // Create new admin
+    const admin = await Admin.create({
+      username: username.toLowerCase(),
+      email: email.toLowerCase(),
+      password: password,
+      name: name,
+      role: role
+    });
 
+    const adminResponse = await Admin.findById(admin._id).select('-password');
 
+    res.status(201).json({
+      success: true,
+      message: "Admin created successfully",
+      data: { admin: adminResponse }
+    });
+  } catch (error) {
+    console.error('Create admin error:', error);
+    
+    if (error.code === 11000) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Admin with this email or username already exists" 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false,
+      message: "Failed to create admin" 
+    });
+  }
+});
 
+// Change admin password
+app.put("/api/admin/admins/:adminId/password", adminAuth, async (req, res) => {
+  try {
+    const { adminId } = req.params;
+    const { newPassword, currentPassword } = req.body;
+    
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ 
+        success: false,
+        message: "New password must be at least 6 characters long" 
+      });
+    }
 
+    const admin = await Admin.findById(adminId).select('+password');
+    
+    if (!admin) {
+      return res.status(404).json({ 
+        success: false,
+        message: "Admin not found" 
+      });
+    }
 
+    // If changing own password, verify current password
+    if (req.admin.id && req.admin.id.toString() === adminId) {
+      if (!currentPassword) {
+        return res.status(400).json({ 
+          success: false,
+          message: "Current password is required to change your own password" 
+        });
+      }
+      
+      const isCurrentPasswordValid = await admin.matchPassword(currentPassword);
+      if (!isCurrentPasswordValid) {
+        return res.status(400).json({ 
+          success: false,
+          message: "Current password is incorrect" 
+        });
+      }
+    }
+
+    admin.password = newPassword;
+    await admin.save();
+
+    res.json({
+      success: true,
+      message: "Password updated successfully"
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Failed to change password" 
+    });
+  }
+});
+
+// Delete admin
+app.delete("/api/admin/admins/:adminId", adminAuth, async (req, res) => {
+  try {
+    const { adminId } = req.params;
+    
+    const admin = await Admin.findById(adminId);
+
+    if (!admin) {
+      return res.status(404).json({ 
+        success: false,
+        message: "Admin not found" 
+      });
+    }
+
+    // Prevent deletion of your own account
+    if (req.admin.id && req.admin.id.toString() === adminId) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Cannot delete your own account" 
+      });
+    }
+
+    await Admin.findByIdAndDelete(adminId);
+
+    res.json({
+      success: true,
+      message: "Admin deleted successfully"
+    });
+  } catch (error) {
+    console.error('Delete admin error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Failed to delete admin" 
+    });
+  }
+});
+
+// ================== ADMIN DASHBOARD ROUTES ==================
 
 app.get("/api/admin/dashboard-stats", adminAuth, async (req, res) => {
   try {
@@ -1238,18 +1129,18 @@ app.get("/api/admin/dashboard-stats", adminAuth, async (req, res) => {
       status: "pending" 
     });
     
+    const pendingInvestments = await Transaction.countDocuments({ 
+      type: "investment", 
+      status: "pending" 
+    });
+
     const recentRegistrations = await User.find()
       .sort({ createdAt: -1 })
       .limit(10)
       .select("username email location ipAddress createdAt");
 
-    // Location statistics
-    const usersWithLocation = await User.find({ 'location.country': { $ne: 'Unknown' } });
-    const countryStats = {};
-    usersWithLocation.forEach(user => {
-      const country = user.location.country;
-      countryStats[country] = (countryStats[country] || 0) + 1;
-    });
+    // Online users count (users with active WebSocket connections)
+    const onlineUsers = Array.from(clients.keys()).length;
 
     res.json({
       success: true,
@@ -1261,12 +1152,15 @@ app.get("/api/admin/dashboard-stats", adminAuth, async (req, res) => {
         pendingTransactions: {
           deposits: pendingDeposits,
           withdrawals: pendingWithdrawals,
-          total: pendingDeposits + pendingWithdrawals
+          investments: pendingInvestments,
+          total: pendingDeposits + pendingWithdrawals + pendingInvestments
         },
         recentRegistrations,
-        locationStats: {
-          totalWithLocation: usersWithLocation.length,
-          countries: countryStats
+        onlineUsers,
+        systemHealth: {
+          database: 'connected',
+          websocket: 'active',
+          uptime: process.uptime()
         }
       }
     });
@@ -1451,7 +1345,7 @@ app.get("/api/admin/users", adminAuth, async (req, res) => {
   }
 });
 
-// ================== ENHANCED INVESTMENT APPROVAL ROUTES ==================
+// ================== INVESTMENT APPROVAL ROUTES ==================
 
 // Get pending investments for admin
 app.get("/api/admin/pending-investments", adminAuth, async (req, res) => {
@@ -1584,58 +1478,6 @@ app.put("/api/admin/investment/:transactionId/approve", adminAuth, async (req, r
   }
 });
 
-// Reject investment
-app.put("/api/admin/investment/:transactionId/reject", adminAuth, async (req, res) => {
-  try {
-    const { transactionId } = req.params;
-    const { adminNote } = req.body;
-    
-    const transaction = await Transaction.findById(transactionId).populate('user');
-    if (!transaction || transaction.type !== "investment") {
-      return res.status(404).json({ 
-        success: false,
-        message: "Investment transaction not found" 
-      });
-    }
-    
-    transaction.status = "rejected";
-    transaction.processed = true;
-    if (adminNote) transaction.adminNote = adminNote;
-    await transaction.save();
-
-    // Send notification to user
-    await sendNotification(
-      transaction.user._id,
-      "Investment Rejected ❌",
-      `Your investment request of $${transaction.amount} has been rejected. ${adminNote ? `Reason: ${adminNote}` : ''}`,
-      "investment",
-      transaction._id,
-      "transaction"
-    );
-
-    // Real-time update via WebSocket
-    sendUserUpdate(transaction.user._id.toString(), {
-      type: 'INVESTMENT_REJECTED',
-      transaction: transaction,
-      amount: transaction.amount,
-      message: `Your investment request of $${transaction.amount} has been rejected`,
-      timestamp: new Date().toISOString()
-    });
-
-    res.json({ 
-      success: true,
-      message: "Investment rejected successfully", 
-      data: { transaction }
-    });
-  } catch (error) { 
-    console.error('Investment rejection error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Investment rejection failed" 
-    }); 
-  }
-});
-
 // ================== MANUAL TOP-UP ROUTES ==================
 
 // Manual deposit top-up
@@ -1692,7 +1534,7 @@ app.post("/api/admin/user/:userId/topup-deposit", adminAuth, async (req, res) =>
       transaction: transaction,
       message: `$${amount} has been added to your deposit balance`,
       timestamp: new Date().toISOString()
-    });
+  });
 
     res.json({ 
       success: true,
@@ -1711,952 +1553,6 @@ app.post("/api/admin/user/:userId/topup-deposit", adminAuth, async (req, res) =>
       success: false,
       message: "Deposit top-up failed" 
     });
-  }
-});
-
-// Manual investment top-up
-app.post("/api/admin/user/:userId/topup-investment", adminAuth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { amount, planId, note } = req.body;
-    
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ 
-        success: false,
-        message: "Valid amount is required" 
-      });
-    }
-
-    if (!planId) {
-      return res.status(400).json({ 
-        success: false,
-        message: "Investment plan is required" 
-      });
-    }
-
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false,
-        message: "User not found" 
-      });
-    }
-
-    const plans = [
-      { id: "1", name: "Basic Plan", profitRate: 5 },
-      { id: "2", name: "Premium Plan", profitRate: 8 },
-      { id: "3", name: "VIP Plan", profitRate: 12 }
-    ];
-    
-    const plan = plans.find(p => p.id === planId);
-    if (!plan) {
-      return res.status(400).json({ 
-        success: false,
-        message: "Invalid investment plan" 
-      });
-    }
-
-    // Create investment directly without deducting from deposit balance
-    const investment = await Investment.create({
-      user: user._id,
-      planName: plan.name,
-      amount: parseFloat(amount),
-      profitRate: plan.profitRate,
-      expectedProfit: parseFloat(amount) * (plan.profitRate / 100),
-      startDate: new Date(),
-      endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
-      status: "active"
-    });
-
-    // Update user's total invested
-    user.totalInvested += parseFloat(amount);
-    await user.save();
-
-    // Create transaction record
-    const transaction = await Transaction.create({
-      user: user._id,
-      type: "investment",
-      amount: parseFloat(amount),
-      status: "approved",
-      investmentPlan: plan.name,
-      adminNote: `Admin manual investment top-up: $${amount} in ${plan.name}. ${note || ''}`,
-      processed: true
-    });
-
-    // Link transaction to investment
-    investment.transaction = transaction._id;
-    await investment.save();
-
-    // Send notification to user
-    await sendNotification(
-      user._id,
-      "Investment Top-Up Added ✅",
-      `Admin has added a new investment of $${amount} in ${plan.name} to your account. ${note || ''}`,
-      "investment",
-      transaction._id,
-      "transaction"
-    );
-
-    // Real-time update via WebSocket
-    sendUserUpdate(user._id.toString(), {
-      type: 'INVESTMENT_TOPUP',
-      walletBalance: user.walletBalance,
-      depositBalance: user.depositBalance,
-      totalInvested: user.totalInvested,
-      amount: amount,
-      investment: investment,
-      transaction: transaction,
-      message: `New investment of $${amount} in ${plan.name} has been added to your account`,
-      timestamp: new Date().toISOString()
-    });
-
-    res.json({ 
-      success: true,
-      message: "Investment top-up successful", 
-      data: {
-        user: {
-          totalInvested: user.totalInvested
-        },
-        investment: investment,
-        transaction: transaction
-      }
-    });
-  } catch (error) {
-    console.error('Investment top-up error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Investment top-up failed" 
-    });
-  }
-});
-
-// Enhanced Admin Balance Management
-app.put("/api/admin/user/:userId/balance", adminAuth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { walletBalance, depositBalance, totalInvested, note } = req.body;
-    
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ 
-      success: false,
-      message: "User not found" 
-    });
-
-    const changes = [];
-    const oldWalletBalance = user.walletBalance;
-    const oldDepositBalance = user.depositBalance;
-    const oldTotalInvested = user.totalInvested;
-
-    if (walletBalance !== undefined) {
-      user.walletBalance = Number(walletBalance);
-      changes.push(`Wallet: $${oldWalletBalance} → $${user.walletBalance}`);
-    }
-    
-    if (depositBalance !== undefined) {
-      user.depositBalance = Number(depositBalance);
-      changes.push(`Deposit: $${oldDepositBalance} → $${user.depositBalance}`);
-    }
-    
-    if (totalInvested !== undefined) {
-      user.totalInvested = Number(totalInvested);
-      changes.push(`Invested: $${oldTotalInvested} → $${user.totalInvested}`);
-    }
-
-    await user.save();
-
-    const transaction = await Transaction.create({
-      user: user._id,
-      type: "admin_adjustment",
-      amount: walletBalance !== undefined ? (user.walletBalance - oldWalletBalance) : 0,
-      status: "approved",
-      adminNote: `Admin manual adjustment: ${changes.join(', ')}. ${note || ''}`,
-      processed: true
-    });
-
-    await sendNotification(
-      user._id,
-      "Account Balance Updated",
-      `Admin has updated your account balances. Changes: ${changes.join(', ')}.${note ? ` Note: ${note}` : ''}`,
-      "balance_update",
-      transaction._id,
-      "transaction"
-    );
-
-    sendUserUpdate(user._id.toString(), {
-      type: 'BALANCE_UPDATE',
-      walletBalance: user.walletBalance,
-      depositBalance: user.depositBalance,
-      totalInvested: user.totalInvested,
-      transaction: transaction,
-      message: 'Your balances have been updated by admin',
-      timestamp: new Date().toISOString()
-    });
-
-    res.json({ 
-      success: true,
-      message: "Balances updated successfully", 
-      data: {
-        user: {
-          walletBalance: user.walletBalance, 
-          depositBalance: user.depositBalance,
-          totalInvested: user.totalInvested
-        },
-        changes: changes,
-        transactionId: transaction._id
-      } 
-    });
-  } catch (error) { 
-    console.error('Balance update error:', error);
-    res.status(500).json({ success: false, message: error.message }); 
-  }
-});
-
-// ================== ENHANCED MANUAL INVESTMENT MANAGEMENT ==================
-
-// Manual investment adjustment
-app.post("/api/admin/user/:userId/adjust-investment", adminAuth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { amount, action, note, planName } = req.body;
-    
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ 
-        success: false,
-        message: "Valid amount is required" 
-      });
-    }
-
-    if (!['add', 'subtract', 'set'].includes(action)) {
-      return res.status(400).json({ 
-        success: false,
-        message: "Invalid action. Use 'add', 'subtract', or 'set'" 
-      });
-    }
-
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false,
-        message: "User not found" 
-      });
-    }
-
-    const oldTotalInvested = user.totalInvested;
-    let newAmount = 0;
-
-    switch (action) {
-      case 'add':
-        user.totalInvested += parseFloat(amount);
-        newAmount = user.totalInvested;
-        break;
-      case 'subtract':
-        user.totalInvested = Math.max(0, user.totalInvested - parseFloat(amount));
-        newAmount = user.totalInvested;
-        break;
-      case 'set':
-        user.totalInvested = parseFloat(amount);
-        newAmount = user.totalInvested;
-        break;
-    }
-
-    await user.save();
-
-    // Create manual investment record
-    const investment = await Investment.create({
-      user: user._id,
-      planName: planName || "Manual Adjustment",
-      amount: parseFloat(amount),
-      profitRate: 0, // Manual adjustments don't have profit rates
-      expectedProfit: 0,
-      startDate: new Date(),
-      status: "active",
-      isManual: true
-    });
-
-    // Create transaction record
-    const transaction = await Transaction.create({
-      user: user._id,
-      type: "investment",
-      amount: parseFloat(amount),
-      status: "approved",
-      investmentPlan: planName || "Manual Adjustment",
-      adminNote: `Manual investment ${action}: $${amount}. ${note || ''}`,
-      processed: true
-    });
-
-    // Link transaction to investment
-    investment.transaction = transaction._id;
-    await investment.save();
-
-    // Send notification to user
-    await sendNotification(
-      user._id,
-      "Investment Updated 📊",
-      `Admin has ${action}ed $${amount} to your investments. ${note || ''}`,
-      "investment",
-      transaction._id,
-      "transaction"
-    );
-
-    // Real-time update via WebSocket
-    sendUserUpdate(user._id.toString(), {
-      type: 'INVESTMENT_ADJUSTED',
-      totalInvested: user.totalInvested,
-      amount: amount,
-      action: action,
-      investment: investment,
-      transaction: transaction,
-      message: `Your investments have been ${action}ed by $${amount}`,
-      timestamp: new Date().toISOString()
-    });
-
-    res.json({ 
-      success: true,
-      message: `Investment ${action}ed successfully`, 
-      data: {
-        user: {
-          totalInvested: user.totalInvested,
-          previousBalance: oldTotalInvested
-        },
-        investment: investment,
-        transaction: transaction
-      }
-    });
-  } catch (error) {
-    console.error('Investment adjustment error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Investment adjustment failed" 
-    });
-  }
-});
-
-// ================== EARNINGS BREAKDOWN MANAGEMENT ==================
-
-// Create earnings breakdown
-app.post("/api/admin/user/:userId/earnings-breakdown", adminAuth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { period, startDate, endDate, profit, deposit, investment, notes } = req.body;
-    
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false,
-        message: "User not found" 
-      });
-    }
-
-    const totalEarnings = (parseFloat(profit) || 0) + (parseFloat(deposit) || 0) + (parseFloat(investment) || 0);
-
-    const earningsBreakdown = await EarningsBreakdown.create({
-      user: user._id,
-      period,
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
-      profit: parseFloat(profit) || 0,
-      deposit: parseFloat(deposit) || 0,
-      investment: parseFloat(investment) || 0,
-      totalEarnings,
-      notes,
-      generatedBy: "admin"
-    });
-
-    // Send notification to user
-    await sendNotification(
-      user._id,
-      "Earnings Breakdown Available 📈",
-      `Your ${period} earnings breakdown for ${new Date(startDate).toLocaleDateString()} - ${new Date(endDate).toLocaleDateString()} is now available. Total: $${totalEarnings.toFixed(2)}`,
-      "profit",
-      earningsBreakdown._id,
-      "earnings"
-    );
-
-    res.json({ 
-      success: true,
-      message: "Earnings breakdown created successfully", 
-      data: { earningsBreakdown }
-    });
-  } catch (error) {
-    console.error('Earnings breakdown creation error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Failed to create earnings breakdown" 
-    });
-  }
-});
-
-// Get user's earnings breakdowns
-app.get("/api/admin/user/:userId/earnings-breakdowns", adminAuth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { period, page = 1, limit = 10 } = req.query;
-    
-    const filter = { user: userId };
-    if (period && period !== 'all') filter.period = period;
-    
-    const skip = (page - 1) * limit;
-    
-    const earnings = await EarningsBreakdown.find(filter)
-      .sort({ startDate: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-    
-    const total = await EarningsBreakdown.countDocuments(filter);
-    
-    res.json({
-      success: true,
-      data: {
-        earnings,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// Finalize earnings breakdown (mark as completed)
-app.put("/api/admin/earnings-breakdown/:breakdownId/finalize", adminAuth, async (req, res) => {
-  try {
-    const { breakdownId } = req.params;
-    
-    const earningsBreakdown = await EarningsBreakdown.findById(breakdownId).populate('user');
-    if (!earningsBreakdown) {
-      return res.status(404).json({ 
-        success: false,
-        message: "Earnings breakdown not found" 
-      });
-    }
-    
-    earningsBreakdown.isFinalized = true;
-    await earningsBreakdown.save();
-
-    // Send notification to user
-    await sendNotification(
-      earningsBreakdown.user._id,
-      "Earnings Breakdown Finalized ✅",
-      `Your ${earningsBreakdown.period} earnings breakdown has been finalized. Total earnings: $${earningsBreakdown.totalEarnings.toFixed(2)}`,
-      "profit",
-      earningsBreakdown._id,
-      "earnings"
-    );
-
-    res.json({ 
-      success: true,
-      message: "Earnings breakdown finalized successfully", 
-      data: { earningsBreakdown }
-    });
-  } catch (error) {
-    console.error('Earnings finalization error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Failed to finalize earnings breakdown" 
-    });
-  }
-});
-
-// ================== EARNINGS BREAKDOWN ROUTES ==================
-
-// Get all earnings breakdowns
-app.get("/api/admin/earnings-breakdowns", adminAuth, async (req, res) => {
-  try {
-    const { page = 1, limit = 50, userId } = req.query;
-    const skip = (page - 1) * limit;
-    
-    const filter = {};
-    if (userId && userId !== 'all') filter.user = userId;
-    
-    const breakdowns = await EarningsBreakdown.find(filter)
-      .populate('user', 'username email')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-    
-    const total = await EarningsBreakdown.countDocuments(filter);
-    
-    res.json({
-      success: true,
-      data: {
-        breakdowns,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// ================== TRANSACTION REPORT ROUTES ==================
-
-// Get all transaction reports
-app.get("/api/admin/transaction-reports", adminAuth, async (req, res) => {
-  try {
-    const { page = 1, limit = 50, userId } = req.query;
-    const skip = (page - 1) * limit;
-    
-    const filter = {};
-    if (userId && userId !== 'all') filter.user = userId;
-    
-    const reports = await TransactionReport.find(filter)
-      .populate('user', 'username email')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-    
-    const total = await TransactionReport.countDocuments(filter);
-    
-    res.json({
-      success: true,
-      data: {
-        reports,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// ================== INVESTMENT MANAGEMENT ROUTES ==================
-
-// Get all investments with filters
-app.get("/api/admin/investments", adminAuth, async (req, res) => {
-  try {
-    const { status, page = 1, limit = 50 } = req.query;
-    const skip = (page - 1) * limit;
-    
-    const filter = {};
-    if (status && status !== 'all') filter.status = status;
-    
-    const investments = await Investment.find(filter)
-      .populate('user', 'username email')
-      .populate('transaction')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-    
-    const total = await Investment.countDocuments(filter);
-    
-    // Calculate stats
-    const activeInvestments = await Investment.countDocuments({ status: 'active' });
-    const totalInvested = await Investment.aggregate([
-      { $match: { status: 'active' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-    
-    res.json({
-      success: true,
-      data: {
-        investments,
-        stats: {
-          active: activeInvestments,
-          totalInvested: totalInvested[0]?.total || 0,
-          total: total
-        },
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// ================== NOTIFICATION MANAGEMENT ROUTES ==================
-
-// Get all notifications
-app.get("/api/admin/notifications", adminAuth, async (req, res) => {
-  try {
-    const { page = 1, limit = 50 } = req.query;
-    const skip = (page - 1) * limit;
-    
-    const notifications = await Notification.find({})
-      .populate('user', 'username email')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-    
-    const total = await Notification.countDocuments();
-    const unread = await Notification.countDocuments({ isRead: false });
-    const today = await Notification.countDocuments({
-      createdAt: { $gte: new Date().setHours(0,0,0,0) }
-    });
-    
-    res.json({
-      success: true,
-      data: {
-        notifications,
-        stats: {
-          total,
-          unread,
-          today
-        },
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// ================== SYSTEM SETTINGS ROUTES ==================
-
-// Get system settings
-app.get("/api/admin/system-settings", adminAuth, async (req, res) => {
-  try {
-    // Mock system info - in production, this would come from your database
-    const systemInfo = {
-      version: "2.1.0",
-      lastBackup: new Date().toISOString(),
-      dbSize: "45.2 MB",
-      uptime: process.uptime()
-    };
-    
-    // Mock investment plans - in production, these would come from your database
-    const plans = [
-      {
-        _id: "1",
-        name: "Basic Plan",
-        minAmount: 50,
-        maxAmount: 1000,
-        profitRate: 5,
-        duration: 30
-      },
-      {
-        _id: "2",
-        name: "Premium Plan", 
-        minAmount: 1001,
-        maxAmount: 5000,
-        profitRate: 8,
-        duration: 30
-      },
-      {
-        _id: "3",
-        name: "VIP Plan",
-        minAmount: 5001,
-        maxAmount: 20000,
-        profitRate: 12,
-        duration: 30
-      }
-    ];
-    
-    res.json({
-      success: true,
-      data: {
-        settings: {
-          siteName: "Galaxy Digital Holdings",
-          adminEmail: "admin@galaxydigital.com",
-          currency: "USD",
-          sessionTimeout: 60,
-          maxLoginAttempts: 5,
-          enable2FA: false,
-          maintenanceMode: false
-        },
-        plans,
-        systemInfo
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// Update system settings
-app.put("/api/admin/system-settings", adminAuth, async (req, res) => {
-  try {
-    const settings = req.body;
-    
-    // In production, save to database
-    console.log('System settings updated:', settings);
-    
-    res.json({
-      success: true,
-      message: "System settings updated successfully",
-      data: { settings }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// ================== CUSTOM TRANSACTION REPORT MANAGEMENT ==================
-
-// Create custom transaction report
-app.post("/api/admin/user/:userId/transaction-report", adminAuth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { title, description, transactions, summary } = req.body;
-    
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false,
-        message: "User not found" 
-      });
-    }
-
-    const transactionReport = await TransactionReport.create({
-      user: user._id,
-      title,
-      description,
-      transactions: transactions.map(t => ({
-        date: new Date(t.date),
-        type: t.type,
-        amount: parseFloat(t.amount),
-        description: t.description,
-        balance: parseFloat(t.balance)
-      })),
-      summary: {
-        totalDeposits: parseFloat(summary.totalDeposits) || 0,
-        totalWithdrawals: parseFloat(summary.totalWithdrawals) || 0,
-        totalInvestments: parseFloat(summary.totalInvestments) || 0,
-        totalProfits: parseFloat(summary.totalProfits) || 0,
-        netBalance: parseFloat(summary.netBalance) || 0
-      },
-      generatedBy: "admin"
-    });
-
-    res.json({ 
-      success: true,
-      message: "Transaction report created successfully", 
-      data: { transactionReport }
-    });
-  } catch (error) {
-    console.error('Transaction report creation error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Failed to create transaction report" 
-    });
-  }
-});
-
-// Send transaction report to user
-app.put("/api/admin/transaction-report/:reportId/send", adminAuth, async (req, res) => {
-  try {
-    const { reportId } = req.params;
-    
-    const transactionReport = await TransactionReport.findById(reportId).populate('user');
-    if (!transactionReport) {
-      return res.status(404).json({ 
-        success: false,
-        message: "Transaction report not found" 
-      });
-    }
-    
-    transactionReport.isSent = true;
-    transactionReport.sentAt = new Date();
-    await transactionReport.save();
-
-    // Send notification to user
-    await sendNotification(
-      transactionReport.user._id,
-      "Transaction Report Available 📋",
-      `A new transaction report "${transactionReport.title}" has been generated for you.`,
-      "info",
-      transactionReport._id,
-      "report"
-    );
-
-    res.json({ 
-      success: true,
-      message: "Transaction report sent to user successfully", 
-      data: { transactionReport }
-    });
-  } catch (error) {
-    console.error('Transaction report sending error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Failed to send transaction report" 
-    });
-  }
-});
-
-// Get user's transaction reports
-app.get("/api/admin/user/:userId/transaction-reports", adminAuth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { page = 1, limit = 10 } = req.query;
-    
-    const skip = (page - 1) * limit;
-    
-    const reports = await TransactionReport.find({ user: userId })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-    
-    const total = await TransactionReport.countDocuments({ user: userId });
-    
-    res.json({
-      success: true,
-      data: {
-        reports,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// ================== BULK OPERATIONS ==================
-
-// Bulk earnings breakdown creation
-app.post("/api/admin/bulk-earnings-breakdown", adminAuth, async (req, res) => {
-  try {
-    const { users, period, startDate, endDate, profit, deposit, investment, notes } = req.body;
-    
-    if (!users || !Array.isArray(users) || users.length === 0) {
-      return res.status(400).json({ 
-        success: false,
-        message: "Users array is required" 
-      });
-    }
-
-    const results = [];
-    
-    for (const userId of users) {
-      const user = await User.findById(userId);
-      if (user) {
-        const totalEarnings = (parseFloat(profit) || 0) + (parseFloat(deposit) || 0) + (parseFloat(investment) || 0);
-        
-        const earningsBreakdown = await EarningsBreakdown.create({
-          user: user._id,
-          period,
-          startDate: new Date(startDate),
-          endDate: new Date(endDate),
-          profit: parseFloat(profit) || 0,
-          deposit: parseFloat(deposit) || 0,
-          investment: parseFloat(investment) || 0,
-          totalEarnings,
-          notes,
-          generatedBy: "admin"
-        });
-
-        await sendNotification(
-          user._id,
-          "Earnings Breakdown Available 📈",
-          `Your ${period} earnings breakdown is now available. Total: $${totalEarnings.toFixed(2)}`,
-          "profit",
-          earningsBreakdown._id,
-          "earnings"
-        );
-
-        results.push({
-          userId: user._id,
-          username: user.username,
-          earningsBreakdown: earningsBreakdown._id
-        });
-      }
-    }
-    
-    res.json({ 
-      success: true,
-      message: `Earnings breakdown created for ${results.length} users`, 
-      data: { results }
-    });
-  } catch (error) {
-    console.error('Bulk earnings breakdown error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Bulk earnings breakdown creation failed" 
-    });
-  }
-});
-
-// ================== USER ROUTES FOR NEW FEATURES ==================
-
-// Get user's earnings breakdowns
-app.get("/api/user/earnings-breakdowns", protect, updateUserLocation, async (req, res) => {
-  try {
-    const { period, page = 1, limit = 10 } = req.query;
-    
-    const filter = { user: req.user._id };
-    if (period && period !== 'all') filter.period = period;
-    
-    const skip = (page - 1) * limit;
-    
-    const earnings = await EarningsBreakdown.find(filter)
-      .sort({ startDate: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-    
-    const total = await EarningsBreakdown.countDocuments(filter);
-    
-    res.json({
-      success: true,
-      data: {
-        earnings,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// Get user's transaction reports
-app.get("/api/user/transaction-reports", protect, updateUserLocation, async (req, res) => {
-  try {
-    const { page = 1, limit = 10 } = req.query;
-    
-    const skip = (page - 1) * limit;
-    
-    const reports = await TransactionReport.find({ user: req.user._id, isSent: true })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-    
-    const total = await TransactionReport.countDocuments({ user: req.user._id, isSent: true });
-    
-    res.json({
-      success: true,
-      data: {
-        reports,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
   }
 });
 
@@ -2699,7 +1595,7 @@ app.put("/api/user/profile", protect, updateUserLocation, async (req, res) => {
   }
 });
 
-// Get current user data - FIX FOR DASHBOARD
+// Get current user data
 app.get("/api/me", protect, updateUserLocation, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
@@ -2984,93 +1880,7 @@ app.get("/api/user/notifications", protect, updateUserLocation, async (req, res)
   }
 });
 
-// Check approved deposits
-app.get("/api/user/check-approved-deposits", protect, updateUserLocation, async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id);
-    res.json({
-      success: true,
-      data: {
-        walletBalance: user.walletBalance,
-        depositBalance: user.depositBalance,
-        processedCount: 0 // You can implement actual logic here
-      },
-      message: "No new approved deposits found"
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// ================== ADDITIONAL ROUTES ==================
-
-// Get user's location data
-app.get("/api/user/location", protect, async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id).select('location ipAddress loginHistory');
-    res.json({
-      success: true,
-      data: {
-        location: user.location,
-        ipAddress: user.ipAddress,
-        loginCount: user.loginHistory.length
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// Admin route to get all users with location data
-app.get("/api/admin/users/locations", adminAuth, async (req, res) => {
-  try {
-    const users = await User.find()
-      .select('username email location ipAddress createdAt lastLogin')
-      .sort({ createdAt: -1 });
-    
-    const locationStats = {
-      totalUsers: users.length,
-      usersWithLocation: users.filter(u => u.location && u.location.country !== 'Unknown').length,
-      countries: {},
-      cities: {}
-    };
-
-    users.forEach(user => {
-      if (user.location && user.location.country) {
-        locationStats.countries[user.location.country] = 
-          (locationStats.countries[user.location.country] || 0) + 1;
-        
-        if (user.location.city) {
-          const cityKey = `${user.location.city}, ${user.location.country}`;
-          locationStats.cities[cityKey] = (locationStats.cities[cityKey] || 0) + 1;
-        }
-      }
-    });
-
-    res.json({
-      success: true,
-      data: {
-        users: users,
-        statistics: locationStats
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
 // Serve uploaded files
-// app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// // Serve frontend last, only for non-API routes
-// app.use(express.static(path.join(__dirname, "public")));
-// app.get(/^\/(?!api).*/, (req, res) => {
-//   res.sendFile(path.join(__dirname, "public", "index.html"));
-// });
-
-// Serve uploaded files
-// ================== FILE SERVING (if needed) ==================
-// Serve uploaded files for proof images, etc.
 app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ================== ROOT ROUTE ==================
@@ -3089,14 +1899,6 @@ app.get('/', (req, res) => {
   });
 });
 
-// ================== API 404 HANDLER ==================
-// app.use('/api/*', (req, res) => {
-//   res.status(404).json({
-//     success: false,
-//     message: `API endpoint ${req.originalUrl} not found`
-//   });
-// });
-
 // ================== ERROR HANDLING ==================
 app.use((error, req, res, next) => {
   console.error('Global error handler:', error);
@@ -3116,644 +1918,13 @@ app.use((error, req, res, next) => {
     ...(process.env.NODE_ENV === 'development' && { error: error.message })
   });
 });
-
-// ================== ENHANCED ADMIN ROUTES FOR COMPLETE SYNC ==================
-
-// Enhanced Admin Dashboard with Real-time User Management
-app.get("/api/admin/dashboard-stats", adminAuth, async (req, res) => {
-  try {
-    const totalUsers = await User.countDocuments();
-    
-    const totalDeposits = await Transaction.aggregate([
-      { $match: { type: "deposit", status: "approved" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } }
-    ]);
-    
-    const totalWithdrawals = await Transaction.aggregate([
-      { $match: { type: "withdrawal", status: "approved" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } }
-    ]);
-    
-    const totalInvestments = await Transaction.aggregate([
-      { $match: { type: "investment", status: "approved" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } }
-    ]);
-    
-    const pendingDeposits = await Transaction.countDocuments({ 
-      type: "deposit", 
-      status: "pending" 
-    });
-    
-    const pendingWithdrawals = await Transaction.countDocuments({ 
-      type: "withdrawal", 
-      status: "pending" 
-    });
-    
-    const pendingInvestments = await Transaction.countDocuments({ 
-      type: "investment", 
-      status: "pending" 
-    });
-
-    const recentRegistrations = await User.find()
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .select("username email location ipAddress createdAt");
-
-    // Online users count (users with active WebSocket connections)
-    const onlineUsers = Array.from(clients.keys()).length;
-
-    res.json({
-      success: true,
-      data: {
-        totalUsers,
-        totalDeposits: totalDeposits[0]?.total || 0,
-        totalWithdrawals: totalWithdrawals[0]?.total || 0,
-        totalInvestments: totalInvestments[0]?.total || 0,
-        pendingTransactions: {
-          deposits: pendingDeposits,
-          withdrawals: pendingWithdrawals,
-          investments: pendingInvestments,
-          total: pendingDeposits + pendingWithdrawals + pendingInvestments
-        },
-        recentRegistrations,
-        onlineUsers,
-        systemHealth: {
-          database: 'connected',
-          websocket: 'active',
-          uptime: process.uptime()
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// Enhanced Withdrawal Management
-app.put("/api/admin/withdrawal/:transactionId/approve", adminAuth, async (req, res) => {
-  try {
-    const { transactionId } = req.params;
-    const { adminNote } = req.body;
-    
-    const transaction = await Transaction.findById(transactionId).populate('user');
-    if (!transaction || transaction.type !== "withdrawal") {
-      return res.status(404).json({ 
-        success: false,
-        message: "Withdrawal transaction not found" 
-      });
-    }
-    
-    if (transaction.status === "approved") {
-      return res.status(400).json({ 
-        success: false,
-        message: "Withdrawal already approved" 
-      });
-    }
-
-    const user = await User.findById(transaction.user._id);
-    
-    if (user.walletBalance < transaction.amount) {
-      return res.status(400).json({ 
-        success: false,
-        message: "User has insufficient balance for this withdrawal" 
-      });
-    }
-
-    // Deduct from wallet balance
-    user.walletBalance -= transaction.amount;
-    await user.save();
-
-    transaction.status = "approved";
-    transaction.processed = true;
-    if (adminNote) transaction.adminNote = adminNote;
-    await transaction.save();
-
-    // Send notification to user
-    await sendNotification(
-      transaction.user._id,
-      "Withdrawal Approved ✅",
-      `Your withdrawal of $${transaction.amount} has been approved and processed.`,
-      "withdrawal",
-      transaction._id,
-      "transaction"
-    );
-
-    // Real-time update via WebSocket
-    sendUserUpdate(transaction.user._id.toString(), {
-      type: 'WITHDRAWAL_APPROVED',
-      walletBalance: user.walletBalance,
-      depositBalance: user.depositBalance,
-      transaction: transaction,
-      amount: transaction.amount,
-      message: `Withdrawal of $${transaction.amount} has been approved and processed`,
-      timestamp: new Date().toISOString()
-    });
-
-    res.json({ 
-      success: true,
-      message: "Withdrawal approved successfully", 
-      data: { 
-        transaction: transaction,
-        userBalance: {
-          walletBalance: user.walletBalance,
-          depositBalance: user.depositBalance
-        }
-      }
-    });
-  } catch (error) { 
-    console.error('Withdrawal approval error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Withdrawal approval failed" 
-    }); 
-  }
-});
-
-app.put("/api/admin/withdrawal/:transactionId/reject", adminAuth, async (req, res) => {
-  try {
-    const { transactionId } = req.params;
-    const { adminNote } = req.body;
-    
-    const transaction = await Transaction.findById(transactionId).populate('user');
-    if (!transaction || transaction.type !== "withdrawal") {
-      return res.status(404).json({ 
-        success: false,
-        message: "Withdrawal transaction not found" 
-      });
-    }
-    
-    transaction.status = "rejected";
-    transaction.processed = true;
-    if (adminNote) transaction.adminNote = adminNote;
-    await transaction.save();
-
-    // Send notification to user
-    await sendNotification(
-      transaction.user._id,
-      "Withdrawal Rejected ❌",
-      `Your withdrawal of $${transaction.amount} has been rejected. ${adminNote ? `Reason: ${adminNote}` : ''}`,
-      "withdrawal",
-      transaction._id,
-      "transaction"
-    );
-
-    // Real-time update via WebSocket
-    sendUserUpdate(transaction.user._id.toString(), {
-      type: 'WITHDRAWAL_REJECTED',
-      transaction: transaction,
-      amount: transaction.amount,
-      message: `Withdrawal of $${transaction.amount} has been rejected`,
-      timestamp: new Date().toISOString()
-    });
-
-    res.json({ 
-      success: true,
-      message: "Withdrawal rejected successfully", 
-      data: { transaction }
-    });
-  } catch (error) { 
-    console.error('Withdrawal rejection error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Withdrawal rejection failed" 
-    }); 
-  }
-});
-
-// Enhanced User Management with Real-time Updates
-app.put("/api/admin/user/:userId/block", adminAuth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { reason } = req.body;
-    
-    const user = await User.findByIdAndUpdate(
-      userId, 
-      { isBlocked: true }, 
-      { new: true }
-    ).select("-password -secretAnswer -confirmPassword");
-    
-    if (!user) {
-      return res.status(404).json({ 
-        success: false,
-        message: "User not found" 
-      });
-    }
-
-    // Send notification to user
-    await sendNotification(
-      user._id,
-      "Account Blocked ❌",
-      `Your account has been blocked by administrator. ${reason ? `Reason: ${reason}` : ''}`,
-      "error",
-      null,
-      "account"
-    );
-
-    // Real-time update via WebSocket
-    sendUserUpdate(user._id.toString(), {
-      type: 'ACCOUNT_BLOCKED',
-      message: 'Your account has been blocked by administrator',
-      reason: reason,
-      timestamp: new Date().toISOString()
-    });
-
-    res.json({ 
-      success: true,
-      message: "User blocked successfully", 
-      data: { user }
-    });
-  } catch (error) { 
-    console.error('User block error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "User block failed" 
-    }); 
-  }
-});
-
-app.put("/api/admin/user/:userId/unblock", adminAuth, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    
-    const user = await User.findByIdAndUpdate(
-      userId, 
-      { isBlocked: false }, 
-      { new: true }
-    ).select("-password -secretAnswer -confirmPassword");
-    
-    if (!user) {
-      return res.status(404).json({ 
-        success: false,
-        message: "User not found" 
-      });
-    }
-
-    // Send notification to user
-    await sendNotification(
-      user._id,
-      "Account Reactivated ✅",
-      "Your account has been reactivated by administrator.",
-      "success",
-      null,
-      "account"
-    );
-
-    // Real-time update via WebSocket
-    sendUserUpdate(user._id.toString(), {
-      type: 'ACCOUNT_UNBLOCKED',
-      message: 'Your account has been reactivated',
-      timestamp: new Date().toISOString()
-    });
-
-    res.json({ 
-      success: true,
-      message: "User unblocked successfully", 
-      data: { user }
-    });
-  } catch (error) { 
-    console.error('User unblock error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "User unblock failed" 
-    }); 
-  }
-});
-
-// Enhanced Profit Distribution
-app.post("/api/admin/distribute-profits", adminAuth, async (req, res) => {
-  try {
-    const { investmentId, amount, note } = req.body;
-    
-    let investments;
-    if (investmentId) {
-      // Distribute profit for specific investment
-      investments = await Investment.find({ _id: investmentId, status: "active" }).populate('user');
-    } else {
-      // Distribute profits for all active investments
-      investments = await Investment.find({ status: "active" }).populate('user');
-    }
-
-    if (!investments || investments.length === 0) {
-      return res.status(404).json({ 
-        success: false,
-        message: "No active investments found" 
-      });
-    }
-
-    const results = [];
-    
-    for (const investment of investments) {
-      const profitAmount = amount || (investment.amount * investment.profitRate / 100);
-      
-      // Update user wallet balance
-      const user = await User.findById(investment.user._id);
-      user.walletBalance += profitAmount;
-      investment.totalProfitEarned += profitAmount;
-      
-      await user.save();
-      await investment.save();
-      
-      // Create profit transaction
-      const profitTransaction = await Transaction.create({
-        user: user._id,
-        type: "profit",
-        amount: profitAmount,
-        status: "approved",
-        processed: true,
-        investmentPlan: investment.planName
-      });
-      
-      // Create profit record
-      await Profit.create({
-        userId: user._id,
-        amount: profitAmount,
-        note: note || `Profit from ${investment.planName}`,
-        investmentId: investment._id
-      });
-      
-      // Send notification to user
-      await sendNotification(
-        user._id,
-        "Profit Added 🎯",
-        `You've received $${profitAmount.toFixed(2)} profit from your ${investment.planName} investment.`,
-        "profit",
-        profitTransaction._id,
-        "transaction"
-      );
-      
-      // Real-time update via WebSocket
-      sendUserUpdate(user._id.toString(), {
-        type: 'PROFIT_ADDED',
-        walletBalance: user.walletBalance,
-        amount: profitAmount,
-        investment: investment,
-        message: `You've received $${profitAmount.toFixed(2)} profit`,
-        timestamp: new Date().toISOString()
-      });
-      
-      results.push({
-        userId: user._id,
-        username: user.username,
-        investment: investment.planName,
-        profit: profitAmount,
-        newBalance: user.walletBalance
-      });
-    }
-    
-    res.json({ 
-      success: true,
-      message: `Profits distributed to ${results.length} investments`, 
-      data: { results }
-    });
-  } catch (error) { 
-    console.error('Profit distribution error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Profit distribution failed" 
-    }); 
-  }
-});
-
-// Enhanced Admin Notification System
-app.post("/api/admin/notify-user", adminAuth, async (req, res) => {
-  try {
-    const { userId, title, content, type } = req.body;
-    
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ 
-        success: false,
-        message: "User not found" 
-      });
-    }
-    
-    const notification = await sendNotification(
-      userId,
-      title,
-      content,
-      type || "info"
-    );
-    
-    // Real-time update via WebSocket
-    sendUserUpdate(userId.toString(), {
-      type: 'NEW_NOTIFICATION',
-      notification: notification,
-      message: 'You have a new notification from admin',
-      timestamp: new Date().toISOString()
-    });
-    
-    res.json({ 
-      success: true,
-      message: "Notification sent successfully", 
-      data: { notification }
-    });
-  } catch (error) { 
-    console.error('Admin notification error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Notification sending failed" 
-    }); 
-  }
-});
-
-app.post("/api/admin/notify-all", adminAuth, async (req, res) => {
-  try {
-    const { title, content, type } = req.body;
-    
-    const users = await User.find({});
-    let sentCount = 0;
-    
-    for (const user of users) {
-      const notification = await sendNotification(
-        user._id,
-        title,
-        content,
-        type || "info"
-      );
-      
-      // Real-time update via WebSocket
-      sendUserUpdate(user._id.toString(), {
-        type: 'NEW_NOTIFICATION',
-        notification: notification,
-        message: 'You have a new notification from admin',
-        timestamp: new Date().toISOString()
-      });
-      
-      sentCount++;
-    }
-    
-    res.json({ 
-      success: true,
-      message: `Notification sent to ${sentCount} users`, 
-      data: { sentCount }
-    });
-  } catch (error) { 
-    console.error('Bulk notification error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "Bulk notification sending failed" 
-    }); 
-  }
-});
-
-// Enhanced System-wide Balance Adjustment
-app.put("/api/admin/system-balance-adjustment", adminAuth, async (req, res) => {
-  try {
-    const { adjustmentType, amount, note } = req.body;
-    
-    if (!['add', 'subtract'].includes(adjustmentType)) {
-      return res.status(400).json({ 
-        success: false,
-        message: "Invalid adjustment type. Use 'add' or 'subtract'" 
-      });
-    }
-    
-    const users = await User.find({});
-    const results = [];
-    
-    for (const user of users) {
-      const oldBalance = user.walletBalance;
-      
-      if (adjustmentType === 'add') {
-        user.walletBalance += amount;
-      } else {
-        user.walletBalance = Math.max(0, user.walletBalance - amount);
-      }
-      
-      await user.save();
-      
-      // Create transaction record
-      const transaction = await Transaction.create({
-        user: user._id,
-        type: "admin_adjustment",
-        amount: adjustmentType === 'add' ? amount : -amount,
-        status: "approved",
-        adminNote: `System balance adjustment: ${adjustmentType} $${amount}. ${note || ''}`,
-        processed: true
-      });
-      
-      // Send notification
-      await sendNotification(
-        user._id,
-        "Balance Adjustment",
-        `Your wallet balance has been ${adjustmentType === 'add' ? 'increased' : 'decreased'} by $${amount}. ${note || ''}`,
-        "balance_update",
-        transaction._id,
-        "transaction"
-      );
-      
-      // Real-time update via WebSocket
-      sendUserUpdate(user._id.toString(), {
-        type: 'ADMIN_BALANCE_ADJUSTMENT',
-        walletBalance: user.walletBalance,
-        adjustmentType: adjustmentType,
-        amount: amount,
-        message: `Your balance has been ${adjustmentType === 'add' ? 'increased' : 'decreased'} by $${amount}`,
-        timestamp: new Date().toISOString()
-      });
-      
-      results.push({
-        userId: user._id,
-        username: user.username,
-        oldBalance: oldBalance,
-        newBalance: user.walletBalance,
-        change: adjustmentType === 'add' ? amount : -amount
-      });
-    }
-    
-    res.json({ 
-      success: true,
-      message: `Balance adjustment applied to ${results.length} users`, 
-      data: { results }
-    });
-  } catch (error) { 
-    console.error('System balance adjustment error:', error);
-    res.status(500).json({ 
-      success: false,
-      message: "System balance adjustment failed" 
-    }); 
-  }
-});
-
-// Enhanced WebSocket user update function
-function sendUserUpdate(userId, data) {
-  const ws = clients.get(userId);
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    try {
-      ws.send(JSON.stringify({
-        ...data,
-        timestamp: new Date().toISOString()
-      }));
-      console.log(`✅ Real-time update sent to user ${userId}:`, data.type);
-    } catch (error) {
-      console.error('❌ Error sending WebSocket message:', error);
-      clients.delete(userId);
-    }
-  } else {
-    console.log(`ℹ️ User ${userId} not connected via WebSocket, update queued for next connection`);
-  }
-}
-
-// Broadcast to all connected users
-function broadcastToAllUsers(data) {
-  clients.forEach((ws, userId) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      try {
-        ws.send(JSON.stringify({
-          ...data,
-          timestamp: new Date().toISOString()
-        }));
-      } catch (error) {
-        console.error(`Error broadcasting to user ${userId}:`, error);
-        clients.delete(userId);
-      }
-    }
-  });
-}
-
-// ================== ERROR HANDLING ==================
-app.use((error, req, res, next) => {
-  console.error('Global error handler:', error);
-  
-  if (error instanceof multer.MulterError) {
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        success: false,
-        message: 'File too large. Maximum size is 5MB.'
-      });
-    }
-  }
-  
-  res.status(500).json({
-    success: false,
-    message: 'Internal server error',
-    ...(process.env.NODE_ENV === 'development' && { error: error.message })
-  });
-});
-
-// 404 handler
-// app.use('*', (req, res) => {
-//   res.status(404).json({
-//     success: false,
-//     message: `Route ${req.originalUrl} not found`
-//   });
-// });
-
-
-// MONGO_URI=mongodb+srv:mongodb+srv://muza:muza@muza.bgig3zj.mongodb.net/muza
-// JWT_SECRET=supersecretjwtkey
-// ADMIN_USERNAME=admin
-// ADMIN_PASSWORD=admin123
-// SMTP_USER=your_email@gmail.com
-// SMTP_PASS=your_password
-// PORT=4000
 
 // ================== START SERVER ==================
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 WebSocket server available at ws://localhost:${PORT}/ws`);
-  console.log(`🔑 Admin credentials: ${ADMIN_USERNAME}/${ADMIN_PASSWORD}`);
+  console.log(`🔑 Default Admin credentials: admin/admin123`);
   console.log(`🌍 Location tracking: Enabled with enhanced IP detection`);
   console.log(`🔒 CORS: Enabled for all origins with comprehensive configuration`);
 });
